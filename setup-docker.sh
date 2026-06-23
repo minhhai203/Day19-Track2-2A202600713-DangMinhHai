@@ -5,7 +5,7 @@
 set -euo pipefail
 
 echo "[docker] Day 19 full Docker setup"
-echo "[docker] Stack: Qdrant (server) + Redis + Postgres + bge-m3 embeddings"
+echo "[docker] Stack: Qdrant (server) + Redis + Postgres + fastembed default (bge-m3 optional)"
 echo
 
 # ── 1. Docker preflight ─────────────────────────────────────────────────
@@ -24,11 +24,12 @@ for i in $(seq 1 30); do
 done
 
 # ── 3. Python venv (same as lite) ───────────────────────────────────────
+PYTHON_BIN="${PYTHON_BIN:-python3.11}"
 if [ ! -d ".venv" ]; then
   if command -v uv >/dev/null 2>&1; then
-    uv venv .venv
+    uv venv --python "$PYTHON_BIN" .venv
   else
-    python3 -m venv .venv
+    "$PYTHON_BIN" -m venv .venv
   fi
 fi
 # shellcheck source=/dev/null
@@ -50,14 +51,17 @@ if [ ! -f .env ]; then
   # Flip the lite defaults to docker — the user can edit afterward.
   sed -i.bak \
     -e 's/^QDRANT_MODE=memory/QDRANT_MODE=server/' \
-    -e 's/^EMBEDDING_BACKEND=fastembed/EMBEDDING_BACKEND=bge-m3/' \
     -e 's/^FEAST_ONLINE_STORE=sqlite/FEAST_ONLINE_STORE=redis/' \
     -e 's/^FEAST_OFFLINE_STORE=file/FEAST_OFFLINE_STORE=postgres/' \
     .env
   rm -f .env.bak
 fi
+grep -q '^POSTGRES_HOST_PORT=' .env || echo 'POSTGRES_HOST_PORT=15432' >> .env
 
-# ── 6. Seed corpus + smoke test ─────────────────────────────────────────
+# ── 6. Render Feast config for docker mode ──────────────────────────────
+python scripts/render_feast_config.py --mode docker
+
+# ── 7. Seed corpus + smoke test ─────────────────────────────────────────
 python scripts/seed_corpus.py
 python scripts/verify_docker.py
 
@@ -67,7 +71,7 @@ cat <<EOF
 
   Qdrant   → http://localhost:6333  (dashboard)
   Redis    → redis://localhost:6379
-  Postgres → postgresql://feast:feast@localhost:5432/feast_offline
+  Postgres → postgresql://feast:feast@localhost:${POSTGRES_HOST_PORT:-15432}/feast_offline
 
 Activate the venv and continue:
 

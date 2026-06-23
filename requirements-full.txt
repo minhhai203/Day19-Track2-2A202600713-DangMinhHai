@@ -8,10 +8,8 @@ redis>=5.0,<6.0
 
 # Postgres (Feast offline store)
 psycopg[binary]>=3.2,<4.0
+psycopg-pool>=3.3,<4.0
 sqlalchemy>=2.0,<3.0
-
-# Heavier multilingual embeddings (optional; keeps fastembed as default)
-sentence-transformers>=3.3,<4.0        # bge-m3 + jina-clip-v2 etc.
 
 # OpenAI (optional, for the bonus challenge swap-in)
 openai>=1.55,<2.0

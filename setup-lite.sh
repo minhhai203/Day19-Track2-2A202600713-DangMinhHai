@@ -14,13 +14,14 @@ PY_VER=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_i
 echo "[lite] Python $PY_VER detected"
 
 # ── 2. venv ─────────────────────────────────────────────────────────────
+PYTHON_BIN="${PYTHON_BIN:-python3.11}"
 if [ ! -d ".venv" ]; then
   if command -v uv >/dev/null 2>&1; then
     echo "[lite] Creating venv with uv (faster)"
-    uv venv .venv
+    uv venv --python "$PYTHON_BIN" .venv
   else
     echo "[lite] Creating venv with python -m venv"
-    python3 -m venv .venv
+    "$PYTHON_BIN" -m venv .venv
   fi
 fi
 # shellcheck source=/dev/null
@@ -39,11 +40,15 @@ jupytext --to notebook --update notebooks/*.py 2>/dev/null || jupytext --to note
 
 # ── 5. .env scaffold ────────────────────────────────────────────────────
 [ -f .env ] || cp .env.example .env
+grep -q '^POSTGRES_HOST_PORT=' .env || echo 'POSTGRES_HOST_PORT=15432' >> .env
 
-# ── 6. Seed corpus + golden set ─────────────────────────────────────────
+# ── 6. Render Feast config for lite mode ────────────────────────────────
+python scripts/render_feast_config.py --mode lite
+
+# ── 7. Seed corpus + golden set ─────────────────────────────────────────
 python scripts/seed_corpus.py
 
-# ── 7. Smoke test ───────────────────────────────────────────────────────
+# ── 8. Smoke test ───────────────────────────────────────────────────────
 python scripts/verify_lite.py
 
 cat <<EOF

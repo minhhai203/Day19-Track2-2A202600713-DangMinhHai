@@ -3,6 +3,10 @@
 Designed to work in both lite (Qdrant in-memory) and docker (Qdrant server) modes;
 switch via env var QDRANT_MODE=memory|server (defaults to memory).
 
+The embedding backend is also env-driven:
+  - EMBEDDING_BACKEND=fastembed (default, lite-friendly)
+  - EMBEDDING_BACKEND=bge-m3     (Docker path, sentence-transformers)
+
 The hybrid mode uses Reciprocal Rank Fusion with k=60 — the same default used
 by Vespa, Elasticsearch, and the hybrid RAG production stacks in the deck §3.
 """
@@ -14,15 +18,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from fastembed import TextEmbedding
+from app.runtime_env import load_repo_env
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, PointStruct, VectorParams
 from rank_bm25 import BM25Okapi
 
+load_repo_env()
+
 Mode = Literal["keyword", "semantic", "hybrid"]
-EMBED_MODEL = "BAAI/bge-small-en-v1.5"   # 384-dim, CPU-friendly, multilingual works on VN
-EMBED_DIM = 384
 COLLECTION = "lab19_corpus"
+DEFAULT_EMBED_DIM = 384
 
 
 @dataclass
@@ -48,7 +53,8 @@ class Searcher:
         self.doc_ids: list[str] = []
         self.bm25: BM25Okapi | None = None
         self.client: QdrantClient | None = None
-        self.embedder: TextEmbedding | None = None
+        self.embedder: _EmbeddingAdapter | None = None
+        self.embed_dim: int | None = None
 
     @property
     def size(self) -> int:
@@ -78,7 +84,9 @@ class Searcher:
         self.bm25 = BM25Okapi(tokenized)
 
     def _build_vector_index(self) -> None:
-        self.embedder = TextEmbedding(model_name=EMBED_MODEL)
+        self.embedder = make_embedder()
+        probe = next(self.embedder.embed_documents(["embedding dimension probe"])).tolist()
+        self.embed_dim = len(probe)
 
         mode = os.getenv("QDRANT_MODE", "memory")
         if mode == "server":
@@ -93,7 +101,7 @@ class Searcher:
             self.client.delete_collection(COLLECTION)
         self.client.create_collection(
             collection_name=COLLECTION,
-            vectors_config=VectorParams(size=EMBED_DIM, distance=Distance.COSINE),
+            vectors_config=VectorParams(size=self.embed_dim or DEFAULT_EMBED_DIM, distance=Distance.COSINE),
         )
 
         # Embed in batches of 64 — fastembed is CPU-bound and that batch size is sweet spot.
@@ -102,7 +110,7 @@ class Searcher:
         for start in range(0, len(self.docs), BATCH):
             batch = self.docs[start:start + BATCH]
             texts = [d["title"] + " " + d["text"] for d in batch]
-            vectors = list(self.embedder.embed(texts))
+            vectors = list(self.embedder.embed_documents(texts))
             for i, (d, v) in enumerate(zip(batch, vectors)):
                 points.append(PointStruct(
                     id=start + i,
@@ -147,7 +155,7 @@ class Searcher:
 
     def _search_semantic(self, query: str, top_k: int) -> list[SearchHit]:
         assert self.client is not None and self.embedder is not None
-        q_vec = next(self.embedder.embed([query])).tolist()
+        q_vec = next(self.embedder.embed_query(query)).tolist()
         result = self.client.query_points(
             collection_name=COLLECTION,
             query=q_vec,
@@ -165,7 +173,7 @@ class Searcher:
 
     def _search_hybrid(self, query: str, top_k: int, rrf_k: int) -> list[SearchHit]:
         # Pull a deeper top-K from each retriever so RRF has signal beyond top-10.
-        depth = max(top_k * 5, 50)
+        depth = max(top_k * 10, 100)
         kw_hits = self._search_keyword(query, depth)
         sem_hits = self._search_semantic(query, depth)
 
@@ -188,3 +196,70 @@ class Searcher:
             )
             for doc_id, score in ordered
         ]
+
+
+class _EmbeddingAdapter:
+    """Small adapter so fastembed and sentence-transformers share one interface."""
+
+    def __init__(self, backend: str, model_name: str):
+        self.backend = backend
+        self.model_name = model_name
+        self.needs_prefix = "e5" in model_name.lower()
+        self._model = self._load_model()
+
+    def _load_model(self):
+        if self.backend == "fastembed":
+            from fastembed import TextEmbedding
+
+            return TextEmbedding(model_name=self.model_name)
+        if self.backend == "bge-m3":
+            from sentence_transformers import SentenceTransformer
+
+            return SentenceTransformer(self.model_name)
+        raise ValueError(f"unknown embedding backend {self.backend!r}")
+
+    def embed(self, texts: list[str]):
+        yield from self.embed_documents(texts)
+
+    def embed_documents(self, texts: list[str]):
+        payloads = [f"passage: {text}" if self.needs_prefix else text for text in texts]
+        if self.backend == "fastembed":
+            yield from self._model.embed(payloads)
+            return
+
+        vectors = self._model.encode(
+            payloads,
+            normalize_embeddings=True,
+            batch_size=32,
+            convert_to_numpy=True,
+            show_progress_bar=False,
+        )
+        for vector in vectors:
+            yield vector
+
+    def embed_query(self, text: str):
+        payload = f"query: {text}" if self.needs_prefix else text
+        if self.backend == "fastembed":
+            yield from self._model.embed([payload])
+            return
+
+        vectors = self._model.encode(
+            [payload],
+            normalize_embeddings=True,
+            batch_size=1,
+            convert_to_numpy=True,
+            show_progress_bar=False,
+        )
+        for vector in vectors:
+            yield vector
+
+
+def make_embedder() -> _EmbeddingAdapter:
+    backend = os.getenv("EMBEDDING_BACKEND", "fastembed").strip().lower()
+    model_name = os.getenv(
+        "EMBEDDING_MODEL",
+        "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+        if backend == "fastembed"
+        else "BAAI/bge-m3",
+    )
+    return _EmbeddingAdapter(backend=backend, model_name=model_name)

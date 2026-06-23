@@ -7,7 +7,7 @@
 # %% [markdown]
 # # NB4 — Feast Feature Store: 3 Feature Views
 #
-# **Stack:** Feast (LF AI&Data 2024+) + SQLite online store + Parquet offline.
+# **Stack:** Feast (LF AI&Data 2024+) + SQLite online store by default, Redis/Postgres in Docker mode.
 # Maps to slide §6 (Feast Feature Store) + deliverable bullet 3.
 #
 # > Mục tiêu: định nghĩa 3 feature views, sinh dữ liệu vào offline store
@@ -16,16 +16,32 @@
 
 # %%
 import _setup  # noqa: F401
+import os
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import polars as pl
 
+from app.runtime_env import load_repo_env
+
+load_repo_env()
+
+from app.feast_repo.feature_views import (
+    ITEM_POPULARITY_TABLE,
+    QUERY_VELOCITY_TABLE,
+    USER_PROFILE_TABLE,
+)
+
 REPO_ROOT = Path(_setup.__file__).resolve().parent.parent
 FEAST_DIR = REPO_ROOT / "app" / "feast_repo"
 FEAST_DATA = FEAST_DIR / "data"
 FEAST_DATA.mkdir(exist_ok=True)
+FEAST_MODE = os.getenv("FEAST_ONLINE_STORE", "sqlite").strip().lower()
+
+for pattern in ("registry*.db", "online_store*.db"):
+    for stale in FEAST_DIR.glob(pattern):
+        stale.unlink()
 
 # %% [markdown]
 # ## 1. Sinh dữ liệu offline (Parquet) cho 3 feature views
@@ -76,13 +92,38 @@ print(f"Wrote 3 Parquet sources to {FEAST_DATA}")
 for p in sorted(FEAST_DATA.glob("*.parquet")):
     print(f"  {p.name}  {p.stat().st_size/1024:.1f} KB")
 
+if FEAST_MODE == "redis":
+    from sqlalchemy import create_engine
+
+    engine = create_engine("postgresql+psycopg://feast:feast@localhost:15432/feast_offline?sslmode=disable")
+    make_user_profile().to_pandas().to_sql(USER_PROFILE_TABLE, engine, if_exists="replace", index=False)
+    make_item_popularity().to_pandas().to_sql(ITEM_POPULARITY_TABLE, engine, if_exists="replace", index=False)
+    make_query_velocity().to_pandas().to_sql(QUERY_VELOCITY_TABLE, engine, if_exists="replace", index=False)
+    print("Loaded 3 tables into Postgres offline store")
+
 # %% [markdown]
-# ## 2. `feast apply` — register 3 feature views với metadata registry
+# ## 2. Render Feast config + `feast apply` — register 3 feature views
 #
 # `app/feast_repo/feature_views.py` đã định nghĩa 3 feature views (xem file đó).
 # Chạy `feast apply` để Feast đọc file definition và ghi vào `registry.db`.
 
 # %%
+render = subprocess.run(
+    [
+        "python",
+        str(REPO_ROOT / "scripts" / "render_feast_config.py"),
+        "--mode",
+        "docker" if FEAST_MODE == "redis" else "lite",
+    ],
+    cwd=str(REPO_ROOT),
+    capture_output=True,
+    text=True,
+    check=False,
+)
+print(render.stdout.strip())
+if render.stderr:
+    print(render.stderr)
+
 res = subprocess.run(
     ["feast", "apply"],
     cwd=str(FEAST_DIR),

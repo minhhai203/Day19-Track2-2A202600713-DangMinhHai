@@ -12,6 +12,11 @@ import traceback
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from app.runtime_env import load_repo_env
+
+load_repo_env()
 
 
 def step(label: str) -> None:
@@ -51,10 +56,11 @@ def main() -> int:
         assert r.ping(), "Redis PING failed"
 
         # ── 3. Postgres ─────────────────────────────────────────────────
-        step("Postgres reachable on :5432")
-        assert can_reach("localhost", 5432), "Postgres not reachable."
+        pg_port = int(os.getenv("POSTGRES_HOST_PORT", "15432"))
+        step(f"Postgres reachable on :{pg_port}")
+        assert can_reach("localhost", pg_port), "Postgres not reachable."
         import psycopg
-        with psycopg.connect("postgresql://feast:feast@localhost:5432/feast_offline") as conn:
+        with psycopg.connect(f"postgresql://feast:feast@localhost:{pg_port}/feast_offline?sslmode=disable") as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT 1")
                 assert cur.fetchone() == (1,)

@@ -7,7 +7,7 @@
 # %% [markdown]
 # # NB1 — Embeddings & Vector Indexing
 #
-# **Stack:** `fastembed` (ONNX, CPU) + Qdrant in-memory.
+# **Stack:** `fastembed` by default, with optional `bge-m3` backend via env + Qdrant in-memory.
 # Maps to slide §1 (Embeddings) + §2 (Vector DB Landscape) + deliverable bullet 1.
 #
 # > Mục tiêu: hiểu cách 1 đoạn text được biến thành vector dày, và cách Qdrant
@@ -18,9 +18,9 @@ import _setup  # noqa: F401  -- adds repo root to sys.path
 import json
 from pathlib import Path
 
-from fastembed import TextEmbedding
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
+from app.search import make_embedder
 
 DATA = Path(_setup.__file__).resolve().parent.parent / "data"
 
@@ -51,8 +51,8 @@ print(json.dumps(docs[0], ensure_ascii=False, indent=2))
 # > Cho lab này dùng `bge-small-en` để mọi laptop chạy được nhanh.
 
 # %%
-embedder = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
-sample = list(embedder.embed(["cloud computing tiếng Việt"]))[0]
+embedder = make_embedder()
+sample = list(embedder.embed_documents(["cloud computing tiếng Việt"]))[0]
 print(f"Vector dim: {len(sample)}")
 print(f"First 8 values: {sample[:8].tolist()}")
 
@@ -110,7 +110,7 @@ assert n_indexed == 1000, f"expected 1000 indexed, got {n_indexed}"
 
 # %%
 query = "cloud computing và tự động mở rộng"
-q_vec = next(embedder.embed([query])).tolist()
+q_vec = next(embedder.embed_query(query)).tolist()
 hits = client.query_points(collection_name="lab19", query=q_vec, limit=5).points
 
 print(f"Query: {query!r}")
@@ -126,7 +126,7 @@ for i, h in enumerate(hits, 1):
 
 # %%
 query2 = "phương pháp tự động mở rộng hạ tầng theo lưu lượng người dùng"
-q_vec2 = next(embedder.embed([query2])).tolist()
+q_vec2 = next(embedder.embed_query(query2)).tolist()
 hits2 = client.query_points(collection_name="lab19", query=q_vec2, limit=5).points
 
 print(f"Query (paraphrase): {query2!r}")

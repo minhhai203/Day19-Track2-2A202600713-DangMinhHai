@@ -22,16 +22,23 @@ Then in Python:
 """
 from __future__ import annotations
 
+import os
 from datetime import timedelta
 from pathlib import Path
 
 from feast import Entity, FeatureView, Field, FileSource, ValueType
 from feast.types import Float32, Int64, String
+from feast.infra.offline_stores.contrib.postgres_offline_store.postgres_source import PostgreSQLSource
 
 # Resolve relative to this file so `feast apply` works regardless of cwd.
 _REPO_ROOT = Path(__file__).resolve().parent
 _DATA_DIR = _REPO_ROOT / "data"
 _DATA_DIR.mkdir(exist_ok=True)
+_OFFLINE_STORE = os.getenv("FEAST_OFFLINE_STORE", "file").strip().lower()
+
+USER_PROFILE_TABLE = "user_profile_features_table"
+ITEM_POPULARITY_TABLE = "item_popularity_features_table"
+QUERY_VELOCITY_TABLE = "query_velocity_features_table"
 
 
 # ── Entities ────────────────────────────────────────────────────────────
@@ -51,26 +58,43 @@ item = Entity(
 
 
 # ── Sources ─────────────────────────────────────────────────────────────
-# Each FileSource points to a Parquet file the student generates in NB4
-# (notebooks/04_feast_feature_store.py builds these from the corpus + synthetic
-# user activity). The schema each source produces is mirrored in the FeatureView.
-user_profile_source = FileSource(
-    name="user_profile_source",
-    path=str(_DATA_DIR / "user_profile.parquet"),
-    timestamp_field="event_timestamp",
-)
+if _OFFLINE_STORE == "postgres":
+    user_profile_source = PostgreSQLSource(
+        name="user_profile_source",
+        table=USER_PROFILE_TABLE,
+        timestamp_field="event_timestamp",
+    )
+    item_popularity_source = PostgreSQLSource(
+        name="item_popularity_source",
+        table=ITEM_POPULARITY_TABLE,
+        timestamp_field="event_timestamp",
+    )
+    query_velocity_source = PostgreSQLSource(
+        name="query_velocity_source",
+        table=QUERY_VELOCITY_TABLE,
+        timestamp_field="event_timestamp",
+    )
+else:
+    # Each FileSource points to a Parquet file the student generates in NB4
+    # (notebooks/04_feast_feature_store.py builds these from the corpus + synthetic
+    # user activity). The schema each source produces is mirrored in the FeatureView.
+    user_profile_source = FileSource(
+        name="user_profile_source",
+        path=str(_DATA_DIR / "user_profile.parquet"),
+        timestamp_field="event_timestamp",
+    )
 
-item_popularity_source = FileSource(
-    name="item_popularity_source",
-    path=str(_DATA_DIR / "item_popularity.parquet"),
-    timestamp_field="event_timestamp",
-)
+    item_popularity_source = FileSource(
+        name="item_popularity_source",
+        path=str(_DATA_DIR / "item_popularity.parquet"),
+        timestamp_field="event_timestamp",
+    )
 
-query_velocity_source = FileSource(
-    name="query_velocity_source",
-    path=str(_DATA_DIR / "query_velocity.parquet"),
-    timestamp_field="event_timestamp",
-)
+    query_velocity_source = FileSource(
+        name="query_velocity_source",
+        path=str(_DATA_DIR / "query_velocity.parquet"),
+        timestamp_field="event_timestamp",
+    )
 
 
 # ── Feature views ───────────────────────────────────────────────────────

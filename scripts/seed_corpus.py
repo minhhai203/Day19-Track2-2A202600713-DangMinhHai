@@ -248,7 +248,7 @@ GOLDEN = [
     ("FastAPI và rate limiting công bằng", "backend", "mixed"),
     ("Spark và phân vùng theo ngày", "data_eng", "mixed"),
     ("LLM và phát hiện hallucination", "ai_ml", "mixed"),
-    ("AWS Lambda và tối ưu chi phí", "cloud", "mixed"),
+    ("AWS Lambda và giảm chi phí khi tải biến động", "cloud", "mixed"),
     ("encryption và bảo vệ dữ liệu nhạy cảm", "security", "mixed"),
     ("MongoDB và high-write workload", "database", "mixed"),
     ("HTTP và cân bằng tải multi-region", "networking", "mixed"),

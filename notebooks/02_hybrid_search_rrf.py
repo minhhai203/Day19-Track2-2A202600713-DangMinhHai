@@ -21,10 +21,10 @@ import json
 import statistics
 from pathlib import Path
 
-from fastembed import TextEmbedding
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
 from rank_bm25 import BM25Okapi
+from app.search import make_embedder
 
 DATA = Path(_setup.__file__).resolve().parent.parent / "data"
 
@@ -39,7 +39,7 @@ tokenized = [(d["title"] + " " + d["text"]).lower().split() for d in docs]
 bm25 = BM25Okapi(tokenized)
 
 # Vector
-embedder = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
+embedder = make_embedder()
 client = QdrantClient(":memory:")
 client.create_collection(
     collection_name="lab19",
@@ -74,7 +74,7 @@ def search_keyword(query: str, top_k: int = TOP_K) -> list[str]:
 
 
 def search_semantic(query: str, top_k: int = TOP_K) -> list[str]:
-    q_vec = next(embedder.embed([query])).tolist()
+    q_vec = next(embedder.embed_query(query)).tolist()
     res = client.query_points(collection_name="lab19", query=q_vec, limit=top_k)
     return [p.payload["doc_id"] for p in res.points]
 

@@ -17,7 +17,10 @@ from typing import Literal
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from app.runtime_env import load_repo_env
 from app.search import Searcher, SearchHit
+
+load_repo_env()
 
 ROOT = Path(__file__).resolve().parent.parent
 CORPUS_PATH = ROOT / "data" / "corpus_vn.jsonl"
